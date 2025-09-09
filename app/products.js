@@ -1,6 +1,6 @@
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/lib/supabase';
-import React, { useEffect, useLayoutEffect, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -13,16 +13,242 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
-  View
+  View,
+  useColorScheme
 } from 'react-native';
 
 import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
+import { Colors } from '@/constants/Colors';
 import { useNavigation } from 'expo-router';
-import { colors } from '../styles/global';
+
+// Função que cria os estilos de acordo com o tema
+const getStyles = (colors) => StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: colors.background,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: colors.background,
+  },
+  loadingText: {
+    marginTop: 16,
+    fontSize: 16,
+    color: colors.textLight,
+  },
+  searchContainer: {
+    backgroundColor: colors.white,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  searchInput: {
+    backgroundColor: colors.background,
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 16,
+    borderWidth: 1,
+    borderColor: colors.border,
+    color: colors.text,
+  },
+  emptyContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 40,
+  },
+  emptyText: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: colors.text,
+    marginBottom: 8,
+  },
+  emptySubtext: {
+    fontSize: 14,
+    color: colors.textLight,
+    textAlign: 'center',
+  },
+  listContainer: {
+    padding: 16,
+  },
+  productCard: {
+    backgroundColor: colors.white,
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 12,
+    elevation: 2,
+    shadowColor: colors.shadow,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  productImage: {
+      width: 60,
+      height: 60,
+      borderRadius: 8,
+      marginRight: 12,
+      backgroundColor: '#f0f0f0',
+  },
+  productInfo: {
+    flex: 1,
+  },
+  productDescription: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: colors.text,
+    marginBottom: 4,
+  },
+  productCode: {
+    fontSize: 14,
+    color: colors.textLight,
+    marginBottom: 4,
+  },
+  productPrice: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: colors.primary,
+  },
+  productActions: {
+    flexDirection: 'row',
+    gap: 8,
+    paddingLeft: 10,
+  },
+  actionButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  editButton: {
+    backgroundColor: '#ffc107',
+  },
+  deleteButton: {
+    backgroundColor: '#dc3545',
+  },
+  actionButtonText: {
+      fontSize: 16
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalContent: {
+    backgroundColor: colors.white,
+    borderRadius: 16,
+    padding: 24,
+    width: '90%',
+    maxWidth: 400,
+  },
+  modalTitle: {
+    textAlign: 'center',
+    marginBottom: 15,
+    fontSize: 18,
+    color: colors.text,
+  },
+  scanButton: {
+    backgroundColor: colors.secondary,
+    padding: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginBottom: 15,
+  },
+  scanButtonText: {
+      color: colors.white,
+      fontWeight: '600'
+  },
+  modalImage: {
+      width: '100%',
+      height: 150,
+      borderRadius: 8,
+      marginBottom: 15,
+      resizeMode: 'contain',
+      backgroundColor: '#f0f0f0'
+  },
+  modalImagePlaceholder: {
+      width: '100%',
+      height: 150,
+      borderRadius: 8,
+      marginBottom: 15,
+      backgroundColor: '#f0f0f0',
+      justifyContent: 'center',
+      alignItems: 'center'
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 16,
+    fontSize: 16,
+    backgroundColor: colors.white,
+    color: colors.text,
+  },
+  modalButtons: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  modalButton: {
+    flex: 1,
+    padding: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  cancelButton: {
+    backgroundColor: '#f8f9fa',
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  saveButton: {
+    backgroundColor: colors.primary,
+  },
+  cancelButtonText: {
+    color: colors.text,
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  saveButtonText: {
+    color: colors.white,
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  eanInstructions: {
+    fontSize: 16,
+    color: colors.text,
+    marginBottom: 10,
+  },
+  eanInput: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 16,
+    fontSize: 16,
+    backgroundColor: colors.white,
+    color: colors.text,
+  },
+  eanExamples: {
+    fontSize: 14,
+    color: colors.textLight,
+    marginBottom: 20,
+    lineHeight: 20,
+  },
+});
 
 export default function ProductsScreen() {
   const navigation = useNavigation();
+  const colorScheme = useColorScheme();
+  const colors = Colors[colorScheme ?? 'light'];
+  const styles = useMemo(() => getStyles(colors), [colors]);
   const { user } = useAuth();
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -44,6 +270,28 @@ export default function ProductsScreen() {
   const [eanCode, setEanCode] = useState('');
   const [searchingEan, setSearchingEan] = useState(false);
 
+  // Helpers do formulário e modal (antes do useLayoutEffect para evitar TDZ)
+  const resetForm = useCallback(() => {
+    setCodigo('');
+    setDescricao('');
+    setPreco('');
+    setFotoUrl('');
+    setEditingProduct(null);
+  }, []);
+
+  const openModal = useCallback((product = null) => {
+    if (product) {
+      setEditingProduct(product);
+      setCodigo(product.codigo || '');
+      setDescricao(product.descricao || '');
+      setPreco(product.preco ? product.preco.toString() : '');
+      setFotoUrl(product.foto_url || '');
+    } else {
+      resetForm();
+    }
+    setModalVisible(true);
+  }, [resetForm]);
+
   useLayoutEffect(() => {
     navigation.setOptions({
       title: 'Produtos',
@@ -61,18 +309,11 @@ export default function ProductsScreen() {
       },
       headerBackTitle: 'Voltar',
     });
-  }, [navigation]);
+  }, [navigation, colors.primary, colors.text, colors.white, openModal]);
 
-  useEffect(() => {
-    // Debounce para a busca, para não fazer uma requisição a cada letra digitada
-    const searchDebounce = setTimeout(() => {
-      loadProducts();
-    }, 300);
+  
 
-    return () => clearTimeout(searchDebounce);
-  }, [searchQuery]);
-
-  const loadProducts = async () => {
+  const loadProducts = useCallback(async () => {
     try {
       if (!products.length && !searchQuery) {
         setLoading(true);
@@ -100,7 +341,15 @@ export default function ProductsScreen() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [products.length, searchQuery]);
+  
+  useEffect(() => {
+    const searchDebounce = setTimeout(() => {
+      loadProducts();
+    }, 300);
+
+    return () => clearTimeout(searchDebounce);
+  }, [searchQuery, loadProducts]);
   
   const onRefresh = async () => {
     setRefreshing(true);
@@ -108,26 +357,9 @@ export default function ProductsScreen() {
     setRefreshing(false);
   };
 
-  const resetForm = () => {
-    setCodigo('');
-    setDescricao('');
-    setPreco('');
-    setFotoUrl('');
-    setEditingProduct(null);
-  };
+  
 
-  const openModal = (product = null) => {
-    if (product) {
-      setEditingProduct(product);
-      setCodigo(product.codigo || '');
-      setDescricao(product.descricao || '');
-      setPreco(product.preco ? product.preco.toString() : '');
-      setFotoUrl(product.foto_url || '');
-    } else {
-      resetForm();
-    }
-    setModalVisible(true);
-  };
+  
 
   const closeModal = () => {
     setModalVisible(false);
@@ -314,7 +546,7 @@ export default function ProductsScreen() {
       ) : products.length === 0 ? (
         <View style={styles.emptyContainer}>
           <Text style={styles.emptyText}>Nenhum produto cadastrado</Text>
-          <Text style={styles.emptySubtext}>Toque em "Adicionar" para cadastrar seu primeiro produto</Text>
+          <Text style={styles.emptySubtext}>Toque em &quot;Adicionar&quot; para cadastrar seu primeiro produto</Text>
         </View>
       ) : (
         <FlatList
@@ -463,220 +695,3 @@ export default function ProductsScreen() {
     </ThemedView>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.background,
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: colors.background,
-  },
-  loadingText: {
-    marginTop: 16,
-    fontSize: 16,
-    color: colors.textLight,
-  },
-  searchContainer: {
-    backgroundColor: colors.white,
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  searchInput: {
-    backgroundColor: colors.background,
-    borderRadius: 8,
-    padding: 12,
-    fontSize: 16,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  emptyContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 40,
-  },
-  emptyText: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: colors.text,
-    marginBottom: 8,
-  },
-  emptySubtext: {
-    fontSize: 14,
-    color: colors.textLight,
-    textAlign: 'center',
-  },
-  listContainer: {
-    padding: 16,
-  },
-  productCard: {
-    backgroundColor: colors.white,
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 12,
-    elevation: 2,
-    shadowColor: colors.shadow,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  productImage: {
-      width: 60,
-      height: 60,
-      borderRadius: 8,
-      marginRight: 12,
-      backgroundColor: '#f0f0f0',
-  },
-  productInfo: {
-    flex: 1,
-  },
-  productDescription: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: colors.text,
-    marginBottom: 4,
-  },
-  productCode: {
-    fontSize: 14,
-    color: colors.textLight,
-    marginBottom: 4,
-  },
-  productPrice: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: colors.primary,
-  },
-  productActions: {
-    flexDirection: 'row',
-    gap: 8,
-    paddingLeft: 10,
-  },
-  actionButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  editButton: {
-    backgroundColor: '#ffc107',
-  },
-  deleteButton: {
-    backgroundColor: '#dc3545',
-  },
-  actionButtonText: {
-      fontSize: 16
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  modalContent: {
-    backgroundColor: colors.white,
-    borderRadius: 16,
-    padding: 24,
-    width: '90%',
-    maxWidth: 400,
-  },
-  modalTitle: {
-    textAlign: 'center',
-    marginBottom: 15,
-    fontSize: 18,
-  },
-  scanButton: {
-    backgroundColor: colors.secondary,
-    padding: 12,
-    borderRadius: 8,
-    alignItems: 'center',
-    marginBottom: 15,
-  },
-  scanButtonText: {
-      color: colors.white,
-      fontWeight: '600'
-  },
-  modalImage: {
-      width: '100%',
-      height: 150,
-      borderRadius: 8,
-      marginBottom: 15,
-      resizeMode: 'contain',
-      backgroundColor: '#f0f0f0'
-  },
-  modalImagePlaceholder: {
-      width: '100%',
-      height: 150,
-      borderRadius: 8,
-      marginBottom: 15,
-      backgroundColor: '#f0f0f0',
-      justifyContent: 'center',
-      alignItems: 'center'
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 16,
-    fontSize: 16,
-    backgroundColor: colors.white,
-  },
-  modalButtons: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  modalButton: {
-    flex: 1,
-    padding: 12,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  cancelButton: {
-    backgroundColor: '#f8f9fa',
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  saveButton: {
-    backgroundColor: colors.primary,
-  },
-  cancelButtonText: {
-    color: colors.text,
-    fontSize: 16,
-    fontWeight: '500',
-  },
-  saveButtonText: {
-    color: colors.white,
-    fontSize: 16,
-    fontWeight: '500',
-  },
-  eanInstructions: {
-    fontSize: 16,
-    color: colors.text,
-    marginBottom: 10,
-  },
-  eanInput: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 16,
-    fontSize: 16,
-    backgroundColor: colors.white,
-  },
-  eanExamples: {
-    fontSize: 14,
-    color: colors.textLight,
-    marginBottom: 20,
-    lineHeight: 20,
-  },
-}); 

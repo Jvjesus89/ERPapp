@@ -20,7 +20,6 @@ Sistema ERP focado em dispositivos móveis, desenvolvido com **React Native** e 
 ## 📱 Funcionalidades Principais
 
 - Interface moderna, responsiva e com suporte a temas claro e escuro  
-- Navegação por abas organizada por módulos  
 - Componentes reutilizáveis e animações suaves  
 - **Autenticação biométrica** (Digital para Android, Face ID para iOS)  
 - Login e cadastro de usuários com armazenamento seguro  
@@ -94,16 +93,6 @@ Sistema ERP focado em dispositivos móveis, desenvolvido com **React Native** e 
 
 ---
 
-## 🔧 Configurações Especiais
-
-- **StatusBar Oculta:** Interface limpa e sem notificações do sistema  
-- **Autenticação biométrica:** Suporte nativo para Android e iOS com permissões automáticas  
-- **Banco de Dados:**  
-  - Supabase com PostgreSQL  
-  - Consultas SQL otimizadas, triggers e views para automação e relatórios  
-
----
-
 ## 🎨 Interface e Design
 
 - Design moderno com cards, sombras e bordas arredondadas  
@@ -120,16 +109,6 @@ Sistema ERP focado em dispositivos móveis, desenvolvido com **React Native** e 
 - Validação de senha antes de habilitar biometria  
 - Logout automático após alteração de configurações  
 - Validação rigorosa de dados no frontend e backend  
-
----
-
-## 📊 Consultas SQL
-
-O arquivo [`database/queries.sql`](database/queries.sql) contém 33 consultas úteis para gerenciamento da tabela produtos, incluindo:  
-- Seleção, busca e filtros  
-- Inserção e atualização  
-- Exclusão e manipulação avançada  
-- Relatórios e análises  
 
 ---
 
