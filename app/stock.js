@@ -1,8 +1,8 @@
 // app/stock.js
 
 import { supabase } from '@/lib/supabase';
-import { useNavigation } from 'expo-router';
-import React, { useEffect, useLayoutEffect, useMemo, useState } from 'react';
+import { useFocusEffect, useNavigation, useRouter } from 'expo-router';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -127,6 +127,8 @@ const StockScreen = () => {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
   const styles = useMemo(() => getStyles(colors), [colorScheme]);
+  const router = useRouter();
+
 
   const [products, setProducts] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -146,23 +148,8 @@ const StockScreen = () => {
     });
   }, [navigation, colors]);
 
-  useEffect(() => {
-    loadProducts(); // Carga inicial
-  }, []);
-
-  useEffect(() => {
-    const searchDebounce = setTimeout(() => {
-      loadProducts();
-    }, 300);
-
-    return () => clearTimeout(searchDebounce);
-  }, [searchQuery]);
-
-  const loadProducts = async () => {
+  const loadProducts = useCallback(async () => {
     try {
-      if (!products.length && !searchQuery) {
-        setLoading(true);
-      }
       let query = supabase
         .from('estoque')
         .select(`
@@ -173,8 +160,7 @@ const StockScreen = () => {
             descricao
           )
         `)
-        .order('descricao', { ascending: true, foreignTable: 'produtos' });
-
+       .order('produtos(descricao)', { ascending: true });
       if (searchQuery.trim()) {
         query = query.ilike('produtos.descricao', `%${searchQuery.trim()}%`);
       }
@@ -189,11 +175,48 @@ const StockScreen = () => {
     } finally {
       setLoading(false);
     }
+  }, [searchQuery]); // A função agora só depende da busca
+
+  // Efeito que recarrega os dados sempre que a tela volta a ter foco
+  useFocusEffect(
+    useCallback(() => {
+      setLoading(true); // Mostra o loading ao focar
+      loadProducts();
+    }, [loadProducts])
+  );
+
+  // Efeito para a busca com debounce
+  useEffect(() => {
+    const searchDebounce = setTimeout(() => {
+      loadProducts();
+    }, 300);
+
+    return () => clearTimeout(searchDebounce);
+  }, [searchQuery, loadProducts]);
+
+  const handleEntrada = (item) => {
+    router.push({
+        pathname: '/entry', 
+        params: { 
+            idestoque: item.idestoque,
+            idproduto: item.produtos.idproduto,
+            descricao: item.produtos.descricao,
+            qtdeestoque: item.qtdeestoque
+        }
+    });
   };
 
-  // ... (funções handleEntrada e handleBalanco) ...
-  const handleEntrada = (item) => { Alert.alert('Entrada'); };
-  const handleBalanco = (item) => { Alert.alert('Balanço'); };
+  const handleBalanco = (item) => {
+    router.push({
+        pathname: '/balance', 
+        params: { 
+            idestoque: item.idestoque,
+            idproduto: item.produtos.idproduto,
+            descricao: item.produtos.descricao,
+            qtdeestoque: item.qtdeestoque
+        }
+    });
+  };
 
 
   const renderItem = ({ item }) => (
@@ -250,3 +273,4 @@ const StockScreen = () => {
 };
 
 export default StockScreen;
+

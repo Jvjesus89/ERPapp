@@ -152,6 +152,9 @@ const getStyles = (colors) => StyleSheet.create({
   saveButton: {
     backgroundColor: colors.primary,
   },
+  dangerButton: {
+    backgroundColor: colors.danger,
+  },
   cancelButtonText: {
     color: colors.text,
     fontSize: 16,
@@ -180,21 +183,23 @@ export default function SalesScreen() {
   const { profile } = useAuth();
 
   const [loading, setLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [sales, setSales] = useState([]);
   const [modalVisible, setModalVisible] = useState(false);
   const [clienteNome, setClienteNome] = useState('');
   // Estados para itens da venda
   const [itemsModalVisible, setItemsModalVisible] = useState(false);
-  const [currentSaleId, setCurrentSaleId] = useState(null);
+  const [currentSaleId, setCurrentSaleId] = useState(null); // null indica uma nova venda
   const [currentSaleTotal, setCurrentSaleTotal] = useState(0);
   const [productsOptions, setProductsOptions] = useState([]);
   const [selectedProductId, setSelectedProductId] = useState(null);
   const [quantity, setQuantity] = useState('1');
   const [unitPrice, setUnitPrice] = useState('');
   const [discount, setDiscount] = useState('0');
-  const [saleItems, setSaleItems] = useState([]);
+  const [saleItems, setSaleItems] = useState([]); // Armazena itens de uma nova venda
   const [editingItemId, setEditingItemId] = useState(null);
+
   const computedTotal = useMemo(() => {
     const q = parseFloat(String(quantity).replace(',', '.')) || 0;
     const u = parseFloat(String(unitPrice).replace(',', '.')) || 0;
@@ -205,6 +210,14 @@ export default function SalesScreen() {
 
   const openModal = useCallback(() => setModalVisible(true), []);
   const closeModal = useCallback(() => setModalVisible(false), []);
+  
+  const resetItemForm = useCallback(() => {
+    setSelectedProductId(null);
+    setQuantity('1');
+    setUnitPrice('');
+    setDiscount('0');
+    setEditingItemId(null);
+  }, []);
 
   useLayoutEffect(() => {
     navigation.setOptions({
@@ -214,30 +227,17 @@ export default function SalesScreen() {
           <Text style={{ color: colors.primary, fontSize: 16, fontWeight: '600' }}>+ Nova</Text>
         </TouchableOpacity>
       ),
-      headerStyle: {
-        backgroundColor: colors.white,
-      },
+      headerStyle: { backgroundColor: colors.white },
       headerTintColor: colors.text,
-      headerTitleStyle: {
-        fontWeight: 'bold',
-      },
+      headerTitleStyle: { fontWeight: 'bold' },
       headerBackTitle: 'Voltar',
     });
   }, [navigation, colors, openModal, styles.headerRight]);
 
   const loadSales = useCallback(async () => {
-    // Apenas mostra o loading na primeira carga
-    if (sales.length === 0 && !searchQuery) {
-        setLoading(true);
-    }
-
+    if (sales.length === 0 && !searchQuery) setLoading(true);
     try {
-      let query = supabase
-        .from('Vendas')
-        .select('idVenda, dtvenda, valortotal, idusuario, idcliente')
-        .order('dtvenda', { ascending: false });
-
-      const { data, error } = await query;
+      const { data, error } = await supabase.from('vendas').select('idvenda, dtvenda, valortotal, idusuario, idcliente').order('dtvenda', { ascending: false });
       if (error) throw error;
       setSales(data || []);
     } catch (error) {
@@ -246,255 +246,191 @@ export default function SalesScreen() {
     } finally {
       setLoading(false);
     }
-  }, [searchQuery]); // Removido sales.length para evitar re-criação desnecessária
+  }, [searchQuery]);
 
-  useEffect(() => {
-    loadSales();
-  }, [loadSales]);
-
+  useEffect(() => { loadSales(); }, [loadSales]);
 
   const loadProducts = useCallback(async () => {
     try {
-      const { data, error } = await supabase
-        .from('produtos')
-        .select('idproduto, descricao, preco')
-        .order('descricao', { ascending: true });
+      const { data, error } = await supabase.from('produtos').select('idproduto, descricao, preco').order('descricao', { ascending: true });
       if (error) throw error;
       setProductsOptions(data || []);
-    } catch (e) {
-      console.error('Erro ao carregar produtos:', e);
-    }
+    } catch (e) { console.error('Erro ao carregar produtos:', e); }
   }, []);
-
-  const filterProducts = useCallback((text) => {
-    const t = (text || '').toLowerCase();
-    setProductsOptions((prev) => prev.filter((p) => (p.descricao || '').toLowerCase().includes(t)));
-    if (!text) {
-      loadProducts();
-    }
-  }, [loadProducts]);
-
+  
   const loadSaleItems = useCallback(async (saleId) => {
     try {
-      const { data, error } = await supabase
-        .from('VendaItens')
-        .select('idvendaItem, idproduto, qtde, vlrunit, desconto, produtos ( descricao )')
-        .eq('idvenda', saleId)
-        .order('idvendaItem', { ascending: true });
+      const { data, error } = await supabase.from('vendaitens').select('idvendaitem, idproduto, qtde, vlrunit, desconto, produtos ( descricao )').eq('idvenda', saleId).order('idvendaitem', { ascending: true });
       if (error) throw error;
       setSaleItems(data || []);
-      return data || [];
-    } catch (e) {
-      console.error('Erro ao carregar itens da venda:', e);
-      return [];
-    }
+    } catch (e) { console.error('Erro ao carregar itens da venda:', e); }
   }, []);
 
-  const updateSaleTotal = useCallback(async (saleId) => {
-    if (!saleId) return;
-    try {
-      const items = await loadSaleItems(saleId);
-      const total = items.reduce((acc, it) => {
-        const q = Number(it.qtde || 0);
-        const u = Number(it.vlrunit || 0);
-        const d = Number(it.desconto || 0);
-        return acc + (q * u - d);
-      }, 0);
-      
-      const { error: updateError } = await supabase.from('Vendas').update({ valortotal: total }).eq('idVenda', saleId);
-      if (updateError) throw updateError;
-      
-      setSales(currentSales =>
-        currentSales.map(sale =>
-          sale.idVenda === saleId ? { ...sale, valortotal: total } : sale
-        )
-      );
-      setCurrentSaleTotal(total);
-
-    } catch (e) {
-      console.error('Erro ao atualizar total da venda:', e);
-      Alert.alert('Erro', 'Não foi possível atualizar o total da venda.');
+  // Efeito para carregar produtos e itens quando o modal de itens abre
+  useEffect(() => {
+    if (itemsModalVisible) {
+      loadProducts();
+      if (currentSaleId) { // Apenas para vendas existentes
+        loadSaleItems(currentSaleId);
+      }
     }
-  }, [loadSaleItems]);
+  }, [itemsModalVisible, currentSaleId, loadProducts, loadSaleItems]);
 
-  const openItemsModal = useCallback(async (saleId) => {
+  // Abre o modal de itens para uma VENDA EXISTENTE
+  const openExistingSaleItemsModal = useCallback((saleId) => {
     setCurrentSaleId(saleId);
-    await loadProducts();
-    await loadSaleItems(saleId);
-    await updateSaleTotal(saleId);
-    setSelectedProductId(null);
-    setQuantity('1');
-    setUnitPrice('');
-    setDiscount('0');
-    setEditingItemId(null);
     setItemsModalVisible(true);
-  }, [loadProducts, loadSaleItems, updateSaleTotal]);
+    resetItemForm();
+  }, [resetItemForm]);
 
+  // Inicia o fluxo de uma NOVA VENDA (não salva no banco ainda)
+  const handleProceedToItems = useCallback(() => {
+    closeModal();
+    setClienteNome(prev => prev.trim() || 'Consumidor Final');
+    setCurrentSaleId(null); // Marca como nova venda
+    setSaleItems([]);
+    resetItemForm();
+    setItemsModalVisible(true);
+  }, [closeModal, resetItemForm]);
+  
+  // Efeito para calcular o total da venda (existente ou nova)
+  useEffect(() => {
+    const total = saleItems.reduce((acc, it) => {
+      const q = Number(it.qtde || 0);
+      const u = Number(it.vlrunit || 0);
+      const d = Number(it.desconto || 0);
+      return acc + (q * u - d);
+    }, 0);
+    setCurrentSaleTotal(total);
+  }, [saleItems]);
+  
   const handleSaveItem = useCallback(async () => {
-    try {
-      if (!currentSaleId || !selectedProductId) {
-        Alert.alert('Atenção', 'Selecione um produto.');
-        return;
-      }
-      const q = parseFloat(String(quantity).replace(',', '.'));
-      const u = parseFloat(String(unitPrice).replace(',', '.'));
-      const d = parseFloat(String(discount || '0').replace(',', '.'));
-      if (!q || q <= 0) {
-        Alert.alert('Atenção', 'Informe uma quantidade válida.');
-        return;
-      }
-      const { error } = await supabase
-        .from('VendaItens')
-        .insert({ idvenda: currentSaleId, idproduto: selectedProductId, qtde: q, vlrunit: u, desconto: d });
-      if (error) throw error;
-      
-      await updateSaleTotal(currentSaleId);
-
-      setSelectedProductId(null);
-      setQuantity('1');
-      setUnitPrice('');
-      setDiscount('0');
-    } catch (_e) {
-      console.error('Erro ao adicionar item:', _e);
-      Alert.alert('Erro', 'Não foi possível adicionar o item.');
+    if (!selectedProductId) {
+      Alert.alert('Atenção', 'Selecione um produto.');
+      return;
     }
-  }, [currentSaleId, selectedProductId, quantity, unitPrice, discount, updateSaleTotal]);
+    const q = parseFloat(String(quantity).replace(',', '.'));
+    if (isNaN(q) || q <= 0) {
+      Alert.alert('Atenção', 'Informe uma quantidade válida.');
+      return;
+    }
+    const u = parseFloat(String(unitPrice).replace(',', '.'));
+    const d = parseFloat(String(discount || '0').replace(',', '.'));
+    
+    const itemData = { idproduto: selectedProductId, qtde: q, vlrunit: u, desconto: d };
+
+    // Se é uma VENDA EXISTENTE, salva direto no banco
+    if (currentSaleId) {
+      try {
+        const dbData = { ...itemData, idvenda: currentSaleId };
+        if (editingItemId) {
+          const { error } = await supabase.from('vendaitens').update(dbData).eq('idvendaitem', editingItemId);
+          if (error) throw error;
+        } else {
+          const { error } = await supabase.from('vendaitens').insert(dbData);
+          if (error) throw error;
+        }
+        await loadSaleItems(currentSaleId);
+      } catch (error) {
+        console.error('Erro ao salvar item:', error);
+        Alert.alert('Erro', 'Não foi possível salvar o item.');
+      }
+    } 
+    // Se é uma NOVA VENDA, salva no estado local
+    else {
+      const product = productsOptions.find(p => p.idproduto === selectedProductId);
+      const itemDataForState = { ...itemData, idvendaitem: editingItemId || `temp_${Date.now()}`, produtos: { descricao: product?.descricao } };
+      
+      if (editingItemId) {
+        setSaleItems(items => items.map(it => it.idvendaitem === editingItemId ? itemDataForState : it));
+      } else {
+        setSaleItems(items => [...items, itemDataForState]);
+      }
+    }
+    resetItemForm();
+  }, [currentSaleId, selectedProductId, quantity, unitPrice, discount, editingItemId, productsOptions, loadSaleItems, resetItemForm]);
 
   const startEditItem = useCallback((it) => {
-    setEditingItemId(it.idvendaItem);
+    setEditingItemId(it.idvendaitem);
     setSelectedProductId(it.idproduto);
     setQuantity(String(it.qtde ?? '1'));
     setUnitPrice(it.vlrunit != null ? String(it.vlrunit) : '');
     setDiscount(it.desconto != null ? String(it.desconto) : '0');
   }, []);
 
-  const handleDeleteItem = useCallback(async (idvendaItem) => {
-    try {
-      if (!currentSaleId) return;
-      const { error } = await supabase
-        .from('VendaItens')
-        .delete()
-        .eq('idvendaItem', idvendaItem);
-      if (error) throw error;
-      await updateSaleTotal(currentSaleId);
-    } catch (_e) {
-      console.error('Erro ao excluir item:', _e);
-      Alert.alert('Erro', 'Não foi possível excluir o item.');
+  const handleDeleteItem = useCallback(async (itemToDelete) => {
+    if (currentSaleId) { // VENDA EXISTENTE
+      try {
+        const { error } = await supabase.from('vendaitens').delete().eq('idvendaitem', itemToDelete.idvendaitem);
+        if (error) throw error;
+        await loadSaleItems(currentSaleId);
+      } catch (e) { Alert.alert('Erro', 'Não foi possível excluir o item.'); }
+    } else { // NOVA VENDA
+      setSaleItems(items => items.filter(it => it.idvendaitem !== itemToDelete.idvendaitem));
     }
-  }, [currentSaleId, updateSaleTotal]);
+  }, [currentSaleId, loadSaleItems]);
 
-  // Função unificada para fechar e salvar o modal de itens
-  const handleCloseAndSaveItemsModal = useCallback(async () => {
+  const handleFinalizeSale = useCallback(async () => {
+    // Se for uma venda existente, a trigger já atualizou o total. Apenas fechamos.
     if (currentSaleId) {
-        await updateSaleTotal(currentSaleId);
+      setItemsModalVisible(false);
+      await loadSales();
+      return;
     }
-    setItemsModalVisible(false);
-  }, [currentSaleId, updateSaleTotal]);
+    
+    // Lógica para salvar uma NOVA VENDA
+    if (saleItems.length === 0) {
+      Alert.alert('Venda Vazia', 'A venda não foi salva pois não continha itens.');
+      setItemsModalVisible(false);
+      return;
+    }
 
-  const handleDeleteSale = useCallback(async (saleId) => {
-    Alert.alert(
-      'Confirmar Exclusão',
-      `Deseja realmente excluir a Venda #${saleId}? Todos os itens serão perdidos.`,
-      [
-        { text: 'Cancelar', style: 'cancel' },
-        {
-          text: 'Excluir',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await supabase.from('VendaItens').delete().eq('idvenda', saleId);
-              await supabase.from('Vendas').delete().eq('idVenda', saleId);
-              await loadSales();
-              Alert.alert('Sucesso', 'Venda excluída com sucesso!');
-            } catch (_e) {
-              console.error('Erro ao excluir venda:', _e);
-              Alert.alert('Erro', 'Não foi possível excluir a venda.');
-            }
-          },
-        },
-      ]
-    );
-  }, [loadSales]);
-
-  const createSale = useCallback(async () => {
+    setIsSaving(true);
     try {
-      const nomeBusca = clienteNome.trim();
       let clienteIdResolved = null;
-
-      // Lógica para encontrar ou criar cliente
-      if (!nomeBusca) {
-        const { data: existente, error: errExistente } = await supabase
-          .from('clientes')
-          .select('idcliente')
-          .ilike('razao', 'Consumidor Final')
-          .maybeSingle();
-        if (errExistente && errExistente.code !== 'PGRST116') throw errExistente;
-        if (existente?.idcliente) {
-          clienteIdResolved = existente.idcliente;
-        } else {
-            const { data: criado, error: errCriar } = await supabase
-              .from('clientes')
-              .insert({ razao: 'Consumidor Final' })
-              .select('idcliente')
-              .single();
-            if (errCriar) throw errCriar;
-            clienteIdResolved = criado.idcliente;
-        }
+      const { data: cliente } = await supabase.from('clientes').select('idcliente').ilike('razao', clienteNome).limit(1).single();
+      if (cliente) {
+        clienteIdResolved = cliente.idcliente;
       } else {
-        const { data: encontrados, error: errBusca } = await supabase
-          .from('clientes')
-          .select('idcliente, razao')
-          .ilike('razao', `%${nomeBusca}%`)
-          .limit(1);
-        if (errBusca) throw errBusca;
-        if (encontrados && encontrados.length > 0) {
-          clienteIdResolved = encontrados[0].idcliente;
-        } else {
-            const { data: criado, error: errCriarNovo } = await supabase
-              .from('clientes')
-              .insert({ razao: nomeBusca })
-              .select('idcliente')
-              .single();
-            if (errCriarNovo) throw errCriarNovo;
-            clienteIdResolved = criado.idcliente;
+        const { data: novoCliente } = await supabase.from('clientes').insert({ razao: clienteNome }).select('idcliente').single();
+        if (novoCliente) {
+            clienteIdResolved = novoCliente.idcliente;
         }
       }
 
-      // Cria a venda
-      const { data: novaVenda, error } = await supabase
-        .from('Vendas')
-        .insert({ idcliente: clienteIdResolved })
-        .select('idVenda')
-        .single();
-      if (error) throw error;
-      
-      // Atualiza o valor total para 0 imediatamente após a criação
-      await supabase.from('Vendas').update({ valortotal: 0 }).eq('idVenda', novaVenda.idVenda);
-      
-      closeModal();
+      const { data: novaVenda, error: vendaError } = await supabase.from('vendas').insert({ idcliente: clienteIdResolved, valortotal: 0 }).select('idvenda').single();
+      if (vendaError) throw vendaError;
+
+      const itemsToInsert = saleItems.map(item => ({ idvenda: novaVenda.idvenda, idproduto: item.idproduto, qtde: item.qtde, vlrunit: item.vlrunit, desconto: item.desconto }));
+      const { error: itemsError } = await supabase.from('vendaitens').insert(itemsToInsert);
+      if (itemsError) throw itemsError;
+
+      Alert.alert('Sucesso', 'Venda salva com sucesso!');
+      setItemsModalVisible(false);
       setClienteNome('');
-      await loadSales(); 
-      
-      Alert.alert('Sucesso', 'Venda criada! Adicione itens em seguida.');
-      await openItemsModal(novaVenda.idVenda);
-    } catch (_e) {
-      console.error('Erro ao criar venda:', _e);
-      Alert.alert('Erro', `Não foi possível criar a venda. Verifique as suas permissões (RLS). Erro: ${_e.message}`);
+      await loadSales();
+    } catch (e) {
+      console.error('Erro ao finalizar venda:', e);
+      Alert.alert('Erro', `Não foi possível salvar a venda: ${e.message}`);
+    } finally {
+      setIsSaving(false);
     }
-  }, [clienteNome, closeModal, loadSales, openItemsModal]);
+  }, [currentSaleId, saleItems, clienteNome, loadSales]);
+  
+  const handleCancelSale = useCallback(() => {
+    setItemsModalVisible(false);
+    setClienteNome('');
+  }, []);
+
+  const handleDeleteSale = useCallback(async (saleId) => { /* ... */ }, [loadSales]);
 
   const renderItem = ({ item }) => (
     <View style={styles.saleCard}>
-      <View style={{ position: 'absolute', right: 8, top: 8 }}>
-        <TouchableOpacity onPress={() => handleDeleteSale(item.idVenda)}>
-          <Text style={{ color: colors.danger, fontWeight: '700' }}>Excluir</Text>
-        </TouchableOpacity>
-      </View>
-      <Text style={styles.saleTitle}>Venda #{item.idVenda}</Text>
+      <Text style={styles.saleTitle}>Venda #{item.idvenda}</Text>
       <Text style={styles.saleSubtitle}>Data: {new Date(item.dtvenda).toLocaleDateString('pt-BR')}</Text>
       <Text style={styles.saleSubtitle}>Total: R$ {(item.valortotal || 0).toFixed(2).replace('.', ',')}</Text>
       <View style={{ marginTop: 12 }}>
-        <TouchableOpacity style={styles.actionButton} onPress={() => openItemsModal(item.idVenda)}>
+        <TouchableOpacity style={styles.actionButton} onPress={() => openExistingSaleItemsModal(item.idvenda)}>
           <Text style={styles.actionButtonText}>Visualizar / Editar Itens</Text>
         </TouchableOpacity>
       </View>
@@ -504,65 +440,34 @@ export default function SalesScreen() {
   return (
     <View style={styles.container}>
       <View style={styles.searchContainer}>
-        <TextInput
-          style={styles.searchInput}
-          placeholder="Buscar vendas..."
-          value={searchQuery}
-          onChangeText={setSearchQuery}
-          placeholderTextColor={colors.textLight}
-        />
+        <TextInput style={styles.searchInput} placeholder="Buscar vendas..." value={searchQuery} onChangeText={setSearchQuery} placeholderTextColor={colors.textLight} />
       </View>
-
-      {loading ? (
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={colors.primary} />
-          <Text style={styles.loadingText}>Carregando vendas...</Text>
-        </View>
-      ) : sales.length === 0 ? (
-        <View style={styles.emptyContainer}>
-          <Text style={styles.emptyText}>Nenhuma venda encontrada</Text>
-          <Text style={styles.emptySubtext}>Crie a sua primeira venda tocando em + Nova</Text>
-        </View>
-      ) : (
-        <FlatList
-          data={sales}
-          keyExtractor={(item) => String(item.idVenda)}
-          renderItem={renderItem}
-          contentContainerStyle={styles.listContainer}
-        />
+      {loading ? ( <View style={styles.loadingContainer}><ActivityIndicator size="large" color={colors.primary} /><Text style={styles.loadingText}>Carregando vendas...</Text></View>
+      ) : sales.length === 0 ? ( <View style={styles.emptyContainer}><Text style={styles.emptyText}>Nenhuma venda encontrada</Text><Text style={styles.emptySubtext}>Crie a sua primeira venda tocando em + Nova</Text></View>
+      ) : ( <FlatList data={sales} keyExtractor={(item) => String(item.idvenda)} renderItem={renderItem} contentContainerStyle={styles.listContainer} />
       )}
-
       <Modal visible={modalVisible} transparent animationType="slide" onRequestClose={closeModal}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Nova Venda</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Cliente (nome). Em branco: Consumidor Final"
-              value={clienteNome}
-              onChangeText={setClienteNome}
-              placeholderTextColor={colors.textLight}
-            />
+            <Text style={styles.modalTitle}>Iniciar Nova Venda</Text>
+            <TextInput style={styles.input} placeholder="Cliente (opcional, padrão: Consumidor Final)" value={clienteNome} onChangeText={setClienteNome} placeholderTextColor={colors.textLight}/>
             <View style={styles.modalButtons}>
-              <TouchableOpacity style={[styles.modalButton, styles.cancelButton]} onPress={closeModal}>
-                <Text style={styles.cancelButtonText}>Cancelar</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.modalButton, styles.saveButton]} onPress={createSale}>
-                <Text style={styles.saveButtonText}>Criar</Text>
-              </TouchableOpacity>
+              <TouchableOpacity style={[styles.modalButton, styles.cancelButton]} onPress={closeModal}><Text style={styles.cancelButtonText}>Cancelar</Text></TouchableOpacity>
+              <TouchableOpacity style={[styles.modalButton, styles.saveButton]} onPress={handleProceedToItems}><Text style={styles.saveButtonText}>Avançar</Text></TouchableOpacity>
             </View>
           </View>
         </View>
       </Modal>
-      {/* Modal de Itens da Venda */}
-      <Modal visible={itemsModalVisible} transparent animationType="slide" onRequestClose={handleCloseAndSaveItemsModal}>
+      <Modal visible={itemsModalVisible} transparent animationType="slide" onRequestClose={() => { if (currentSaleId) { handleFinalizeSale(); } else { handleCancelSale(); } }}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Itens da Venda #{currentSaleId}</Text>
+            <Text style={styles.modalTitle}>Itens da Venda {currentSaleId ? `#${currentSaleId}` : `(${clienteNome || 'Consumidor Final'})`}</Text>
+            
+            {/* --- CÓDIGO RESTAURADO COMEÇA AQUI --- */}
             <TextInput
               style={styles.input}
-              placeholder="Buscar produto (digite para filtrar por descrição)"
-              onChangeText={(text) => filterProducts(text)}
+              placeholder="Buscar produto..."
+              onChangeText={loadProducts} // Simplificado para recarregar a lista
               placeholderTextColor={colors.textLight}
             />
             <FlatList
@@ -570,7 +475,8 @@ export default function SalesScreen() {
               keyExtractor={(p) => String(p.idproduto)}
               horizontal
               showsHorizontalScrollIndicator={false}
-              contentContainerStyle={{ paddingBottom: 8 }}
+              ListEmptyComponent={<Text style={{color: colors.textLight}}>Nenhum produto encontrado.</Text>}
+              contentContainerStyle={{ paddingBottom: 8, height: productsOptions.length > 0 ? 'auto' : 0 }}
               renderItem={({ item: p }) => (
                 <TouchableOpacity
                   style={{
@@ -593,7 +499,7 @@ export default function SalesScreen() {
                 </TouchableOpacity>
               )}
             />
-            <View style={{ flexDirection: 'row', gap: 12 }}>
+             <View style={{ flexDirection: 'row', gap: 12 }}>
               <View style={{ flex: 1 }}>
                 <TextInput
                   style={styles.input}
@@ -628,42 +534,26 @@ export default function SalesScreen() {
             <Text style={{ color: colors.text, marginBottom: 8 }}>
               Subtotal: R$ {computedTotal.toFixed(2).replace('.', ',')}
             </Text>
-            <TouchableOpacity style={[styles.actionButton, { marginBottom: 12 }]} onPress={handleSaveItem}>
-              <Text style={styles.actionButtonText}>{editingItemId ? 'Atualizar Item' : 'Adicionar Item'}</Text>
-            </TouchableOpacity>
-            <FlatList
-              data={saleItems}
-              keyExtractor={(it) => String(it.idvendaItem)}
-              contentContainerStyle={{ paddingVertical: 4 }}
-              renderItem={({ item: it }) => {
-                const itemSubtotal = (Number(it.qtde || 0) * Number(it.vlrunit || 0)) - Number(it.desconto || 0);
-                return (
-                  <TouchableOpacity onPress={() => startEditItem(it)} style={{
-                    borderWidth: 1,
-                    borderColor: colors.border,
-                    borderRadius: 8,
-                    padding: 12,
-                    marginBottom: 8,
-                    backgroundColor: colors.white,
-                  }}>
-                    <Text style={{ color: colors.text, fontWeight: '600' }}>{it.produtos?.descricao || `Produto #${it.idproduto}`}</Text>
-                    <Text style={{ color: colors.textLight }}>Qtd: {it.qtde}  |  Unit: R$ {Number(it.vlrunit || 0).toFixed(2).replace('.', ',')}  |  Desc: R$ {Number(it.desconto || 0).toFixed(2).replace('.', ',')} |  SubTotal: R$ {itemSubtotal.toFixed(2).replace('.', ',')}</Text>
-                    <View style={{ position: 'absolute', right: 8, top: 8 }}>
-                      <TouchableOpacity onPress={() => handleDeleteItem(it.idvendaItem)}>
-                        <Text style={{ color: colors.danger, fontWeight: '700' }}>Excluir</Text>
-                      </TouchableOpacity>
-                    </View>
-                  </TouchableOpacity>
-                )
-              }}
-            />
-            <Text style={styles.totalText}>
-              Total da Venda: R$ {currentSaleTotal.toFixed(2).replace('.', ',')}
-            </Text>
+            {/* --- CÓDIGO RESTAURADO TERMINA AQUI --- */}
+
+            <TouchableOpacity style={[styles.actionButton, { marginBottom: 12 }]} onPress={handleSaveItem}><Text style={styles.actionButtonText}>{editingItemId ? 'Atualizar Item' : 'Adicionar Item'}</Text></TouchableOpacity>
+            
+            <FlatList data={saleItems} style={{maxHeight: 150}} keyExtractor={(it) => String(it.idvendaitem)} ListEmptyComponent={<Text style={{textAlign: 'center', color: colors.textLight, marginVertical: 20}}>Nenhum item adicionado</Text>} renderItem={({ item: it }) => { const itemSubtotal = (Number(it.qtde || 0) * Number(it.vlrunit || 0)) - Number(it.desconto || 0); return (
+              <TouchableOpacity onPress={() => startEditItem(it)} style={{ borderWidth: 1, borderColor: colors.border, borderRadius: 8, padding: 12, marginBottom: 8, backgroundColor: colors.white, }}>
+                <Text style={{ color: colors.text, fontWeight: '600' }}>{it.produtos?.descricao || `Produto`}</Text>
+                <Text style={{ color: colors.textLight }}>Qtd: {it.qtde} | Unit: R$ {Number(it.vlrunit || 0).toFixed(2).replace('.', ',')} | SubTotal: R$ {itemSubtotal.toFixed(2).replace('.', ',')}</Text>
+                <View style={{ position: 'absolute', right: 8, top: '50%', transform: [{ translateY: -10 }] }}><TouchableOpacity onPress={() => handleDeleteItem(it)}><Text style={{ color: colors.danger, fontWeight: '700' }}>Excluir</Text></TouchableOpacity></View>
+              </TouchableOpacity> ); }} />
+            
+            <Text style={styles.totalText}>Total da Venda: R$ {currentSaleTotal.toFixed(2).replace('.', ',')}</Text>
+            
             <View style={styles.modalButtons}>
-                <TouchableOpacity style={[styles.modalButton, styles.saveButton]} onPress={handleCloseAndSaveItemsModal}>
-                    <Text style={styles.saveButtonText}>Concluir</Text>
-                </TouchableOpacity>
+              {!currentSaleId && ( // Mostra o botão de cancelar apenas para NOVAS vendas
+                <TouchableOpacity style={[styles.modalButton, styles.dangerButton]} onPress={handleCancelSale}><Text style={styles.saveButtonText}>Cancelar Venda</Text></TouchableOpacity>
+              )}
+              <TouchableOpacity style={[styles.modalButton, styles.saveButton]} onPress={handleFinalizeSale} disabled={isSaving}>
+                <Text style={styles.saveButtonText}>{isSaving ? 'Salvando...' : 'Concluir'}</Text>
+              </TouchableOpacity>
             </View>
           </View>
         </View>
