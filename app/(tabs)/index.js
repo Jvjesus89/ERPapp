@@ -7,7 +7,7 @@ import { getCardStyle, homeStyles } from '../../styles/home.styles';
 
 const options = [
   { id: '1', title: 'Vendas', icon: 'cart-outline', lib: 'Material', route: '/sales' },
-  { id: '2', title: 'Financeiro', icon: 'cash-outline' },
+  { id: '2', title: 'Financeiro', icon: 'cash-outline', lib: 'Material', route: '/financial' },
   { id: '3', title: 'Produtos', icon: 'cube-outline', lib: 'Material', route: '/products' },
   { id: '4', title: 'Estoque', icon: 'package-variant', iconLib: 'Material', route: '/stock' },
   { id: '5', title: 'Relatórios', icon: 'document-text-outline' },

@@ -3,6 +3,7 @@ import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
+import { supabase } from '@/lib/supabase'; // Precisamos do Supabase para a consulta de empresas
 import { colors } from '../styles/global';
 
 export default function LoginScreen() {
@@ -11,7 +12,7 @@ export default function LoginScreen() {
   const [isLoading, setIsLoading] = useState(false);
   const [isBiometricEnabled, setIsBiometricEnabled] = useState(false);
   const router = useRouter();
-  const { signIn, profile, isBiometricSupport, loginWithBiometrics, getBiometricCredentials } = useAuth();
+  const { signIn, session, isBiometricSupport, loginWithBiometrics, getBiometricCredentials } = useAuth();
 
   useEffect(() => {
     const checkBiometrics = async () => {
@@ -30,35 +31,62 @@ export default function LoginScreen() {
 
     setIsLoading(true);
     
-    const { error } = await signIn(email, password);
+    const { data: authData, error } = await signIn(email, password);
       
     if (error) {
       Alert.alert('Erro de Login', error.message);
-    } else {
-      // O redirecionamento agora é tratado pelo AuthProvider
-      router.replace('/(tabs)');
+      setIsLoading(false);
+      return;
+    }
+
+    if (authData.user) {
+        // Passo 2: Após o login, verificar a quantas empresas o utilizador pertence
+        const { data: memberships, error: membershipError } = await supabase
+            .from('membros_empresa')
+            .select('empresa_id, empresas ( nome )')
+            .eq('user_id', authData.user.id);
+
+        if (membershipError) {
+            Alert.alert('Erro', 'Não foi possível verificar as suas empresas.');
+            setIsLoading(false);
+            return;
+        }
+
+        // Se o utilizador não pertence a nenhuma empresa (caso raro), exibe um erro.
+        if (!memberships || memberships.length === 0) {
+            Alert.alert('Acesso Negado', 'Você não é membro de nenhuma empresa.');
+            setIsLoading(false);
+            return;
+        }
+
+        // Se pertence a apenas UMA empresa, entra diretamente.
+        if (memberships.length === 1) {
+            // Aqui, no futuro, vamos guardar a empresa_id selecionada num contexto global.
+            // Por agora, apenas redirecionamos.
+            router.replace('/(tabs)');
+        } 
+        // Se pertence a VÁRIAS empresas, vai para a tela de seleção.
+        else {
+            router.replace({
+                pathname: '/select-company',
+                params: { userId: authData.user.id }
+            });
+        }
     }
     
     setIsLoading(false);
   };
 
   const handleBiometricLogin = async () => {
-    setIsLoading(true);
-    const { error } = await loginWithBiometrics();
-    if (error) {
-      Alert.alert('Falha na Autenticação', error.message);
-    }
-    setIsLoading(false);
+    // A lógica de login biométrico também precisará ser ajustada no futuro
+    // para seguir o mesmo fluxo de verificação de empresas.
+    Alert.alert('Em Breve', 'O login biométrico será reativado após a seleção de empresa.');
   };
 
   return (
     <View style={styles.container}>
       <View style={styles.content}>
         <Text style={styles.title}>ERP Login</Text>
-        
-        {profile && (
-          <Text style={styles.profileInfo}>Bem-vindo, {profile.usuario}!</Text>
-        )}
         
         <View style={styles.form}>
           <TextInput
@@ -139,14 +167,8 @@ const styles = StyleSheet.create({
     fontSize: 32,
     fontWeight: 'bold',
     textAlign: 'center',
-    marginBottom: 8,
+    marginBottom: 24, // Aumentado o espaço
     color: colors.text,
-  },
-  profileInfo: {
-    fontSize: 16,
-    color: colors.primary,
-    textAlign: 'center',
-    marginBottom: 32,
   },
   form: {
     marginBottom: 24,
@@ -180,7 +202,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   biometricButton: {
-    backgroundColor: colors.secondary,
+    backgroundColor: colors.white,
     borderWidth: 1,
     borderColor: colors.border,
   },
@@ -205,4 +227,4 @@ const styles = StyleSheet.create({
     fontSize: 16,
     textDecorationLine: 'underline',
   },
-}); 
+});

@@ -173,6 +173,35 @@ const getStyles = (colors) => StyleSheet.create({
     marginBottom: 16,
     marginTop: 8,
   },
+  paymentContainer: {
+    marginTop: 8,
+    marginBottom: 16,
+  },
+  paymentLabel: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: colors.text,
+    marginBottom: 8,
+  },
+  paymentButton: {
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginRight: 8, // Adicionado para espaçamento
+  },
+  paymentButtonSelected: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  paymentButtonText: {
+    color: colors.text,
+    fontWeight: '500',
+  },
+  paymentButtonTextSelected: {
+    color: colors.white,
+  },
 });
 
 export default function SalesScreen() {
@@ -180,7 +209,7 @@ export default function SalesScreen() {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
   const styles = useMemo(() => getStyles(colors), [colors]);
-  const { profile } = useAuth();
+  const { activeCompany } = useAuth(); // Obter a empresa ativa
 
   const [loading, setLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -199,6 +228,8 @@ export default function SalesScreen() {
   const [discount, setDiscount] = useState('0');
   const [saleItems, setSaleItems] = useState([]); // Armazena itens de uma nova venda
   const [editingItemId, setEditingItemId] = useState(null);
+  const [paymentOptions, setPaymentOptions] = useState([]);
+  const [selectedPaymentMethodId, setSelectedPaymentMethodId] = useState(null);
 
   const computedTotal = useMemo(() => {
     const q = parseFloat(String(quantity).replace(',', '.')) || 0;
@@ -235,9 +266,10 @@ export default function SalesScreen() {
   }, [navigation, colors, openModal, styles.headerRight]);
 
   const loadSales = useCallback(async () => {
+    // A RLS irá filtrar automaticamente as vendas pela empresa do utilizador
     if (sales.length === 0 && !searchQuery) setLoading(true);
     try {
-      const { data, error } = await supabase.from('vendas').select('idvenda, dtvenda, valortotal, idusuario, idcliente').order('dtvenda', { ascending: false });
+      const { data, error } = await supabase.from('vendas').select('idvenda, dtvenda, valortotal, idcliente').order('dtvenda', { ascending: false });
       if (error) throw error;
       setSales(data || []);
     } catch (error) {
@@ -251,6 +283,7 @@ export default function SalesScreen() {
   useEffect(() => { loadSales(); }, [loadSales]);
 
   const loadProducts = useCallback(async () => {
+    // A RLS irá filtrar automaticamente os produtos
     try {
       const { data, error } = await supabase.from('produtos').select('idproduto, descricao, preco').order('descricao', { ascending: true });
       if (error) throw error;
@@ -258,6 +291,14 @@ export default function SalesScreen() {
     } catch (e) { console.error('Erro ao carregar produtos:', e); }
   }, []);
   
+  const loadPaymentOptions = useCallback(async () => {
+    try {
+      const { data, error } = await supabase.from('formas_pagamento').select('*');
+      if (error) throw error;
+      setPaymentOptions(data || []);
+    } catch (e) { console.error('Erro ao carregar formas de pagamento:', e); }
+  }, []);
+
   const loadSaleItems = useCallback(async (saleId) => {
     try {
       const { data, error } = await supabase.from('vendaitens').select('idvendaitem, idproduto, qtde, vlrunit, desconto, produtos ( descricao )').eq('idvenda', saleId).order('idvendaitem', { ascending: true });
@@ -266,45 +307,55 @@ export default function SalesScreen() {
     } catch (e) { console.error('Erro ao carregar itens da venda:', e); }
   }, []);
 
-  // Efeito para carregar produtos e itens quando o modal de itens abre
   useEffect(() => {
     if (itemsModalVisible) {
       loadProducts();
-      if (currentSaleId) { // Apenas para vendas existentes
+      loadPaymentOptions();
+      if (currentSaleId) {
         loadSaleItems(currentSaleId);
       }
     }
-  }, [itemsModalVisible, currentSaleId, loadProducts, loadSaleItems]);
+  }, [itemsModalVisible, currentSaleId, loadProducts, loadSaleItems, loadPaymentOptions]);
 
-  // Abre o modal de itens para uma VENDA EXISTENTE
-  const openExistingSaleItemsModal = useCallback((saleId) => {
+  const openExistingSaleItemsModal = useCallback(async (saleId) => {
+    try {
+        const { data: saleData, error } = await supabase
+            .from('vendas')
+            .select('idformapagamento')
+            .eq('idvenda', saleId)
+            .single();
+        if (error) throw error;
+        setSelectedPaymentMethodId(saleData.idformapagamento);
+    } catch (error) {
+        console.error("Erro ao buscar detalhes da venda:", error);
+        setSelectedPaymentMethodId(null);
+    }
+
     setCurrentSaleId(saleId);
     setItemsModalVisible(true);
     resetItemForm();
   }, [resetItemForm]);
 
-  // Inicia o fluxo de uma NOVA VENDA (não salva no banco ainda)
   const handleProceedToItems = useCallback(() => {
     closeModal();
     setClienteNome(prev => prev.trim() || 'Consumidor Final');
-    setCurrentSaleId(null); // Marca como nova venda
+    setCurrentSaleId(null);
     setSaleItems([]);
     resetItemForm();
     setItemsModalVisible(true);
+    setSelectedPaymentMethodId(null);
   }, [closeModal, resetItemForm]);
   
-  // Efeito para calcular o total da venda (existente ou nova)
   useEffect(() => {
-    const total = saleItems.reduce((acc, it) => {
-      const q = Number(it.qtde || 0);
-      const u = Number(it.vlrunit || 0);
-      const d = Number(it.desconto || 0);
-      return acc + (q * u - d);
-    }, 0);
+    const total = saleItems.reduce((acc, it) => (acc + (Number(it.qtde || 0) * Number(it.vlrunit || 0)) - Number(it.desconto || 0)), 0);
     setCurrentSaleTotal(total);
   }, [saleItems]);
   
   const handleSaveItem = useCallback(async () => {
+    if (!activeCompany?.id) {
+        Alert.alert('Erro', 'Nenhuma empresa ativa selecionada.');
+        return;
+    }
     if (!selectedProductId) {
       Alert.alert('Atenção', 'Selecione um produto.');
       return;
@@ -317,9 +368,8 @@ export default function SalesScreen() {
     const u = parseFloat(String(unitPrice).replace(',', '.'));
     const d = parseFloat(String(discount || '0').replace(',', '.'));
     
-    const itemData = { idproduto: selectedProductId, qtde: q, vlrunit: u, desconto: d };
+    const itemData = { idproduto: selectedProductId, qtde: q, vlrunit: u, desconto: d, empresa_id: activeCompany.id };
 
-    // Se é uma VENDA EXISTENTE, salva direto no banco
     if (currentSaleId) {
       try {
         const dbData = { ...itemData, idvenda: currentSaleId };
@@ -331,13 +381,8 @@ export default function SalesScreen() {
           if (error) throw error;
         }
         await loadSaleItems(currentSaleId);
-      } catch (error) {
-        console.error('Erro ao salvar item:', error);
-        Alert.alert('Erro', 'Não foi possível salvar o item.');
-      }
-    } 
-    // Se é uma NOVA VENDA, salva no estado local
-    else {
+      } catch (error) { console.error('Erro ao salvar item:', error); Alert.alert('Erro', 'Não foi possível salvar o item.'); }
+    } else {
       const product = productsOptions.find(p => p.idproduto === selectedProductId);
       const itemDataForState = { ...itemData, idvendaitem: editingItemId || `temp_${Date.now()}`, produtos: { descricao: product?.descricao } };
       
@@ -348,7 +393,7 @@ export default function SalesScreen() {
       }
     }
     resetItemForm();
-  }, [currentSaleId, selectedProductId, quantity, unitPrice, discount, editingItemId, productsOptions, loadSaleItems, resetItemForm]);
+  }, [currentSaleId, selectedProductId, quantity, unitPrice, discount, editingItemId, productsOptions, loadSaleItems, resetItemForm, activeCompany]);
 
   const startEditItem = useCallback((it) => {
     setEditingItemId(it.idvendaitem);
@@ -359,49 +404,92 @@ export default function SalesScreen() {
   }, []);
 
   const handleDeleteItem = useCallback(async (itemToDelete) => {
-    if (currentSaleId) { // VENDA EXISTENTE
+    if (currentSaleId) {
       try {
         const { error } = await supabase.from('vendaitens').delete().eq('idvendaitem', itemToDelete.idvendaitem);
         if (error) throw error;
         await loadSaleItems(currentSaleId);
       } catch (e) { Alert.alert('Erro', 'Não foi possível excluir o item.'); }
-    } else { // NOVA VENDA
+    } else {
       setSaleItems(items => items.filter(it => it.idvendaitem !== itemToDelete.idvendaitem));
     }
   }, [currentSaleId, loadSaleItems]);
 
   const handleFinalizeSale = useCallback(async () => {
-    // Se for uma venda existente, a trigger já atualizou o total. Apenas fechamos.
+    if (!activeCompany?.id) {
+        Alert.alert('Erro', 'Nenhuma empresa ativa selecionada.');
+        return;
+    }
+
     if (currentSaleId) {
-      setItemsModalVisible(false);
-      await loadSales();
-      return;
+        if (!selectedPaymentMethodId) {
+            Alert.alert('Atenção', 'Selecione uma forma de pagamento para atualizar a venda.');
+            return;
+        }
+        setIsSaving(true);
+        try {
+            const { error } = await supabase
+              .from('vendas')
+              .update({ 
+                idformapagamento: selectedPaymentMethodId,
+                valortotal: currentSaleTotal 
+              })
+              .eq('idvenda', currentSaleId);
+
+            if (error) throw error;
+            Alert.alert('Sucesso', 'Venda atualizada com sucesso!');
+            setItemsModalVisible(false);
+            await loadSales();
+        } catch (e) {
+            console.error('Erro ao atualizar venda:', e);
+            Alert.alert('Erro', `Não foi possível atualizar a venda: ${e.message}`);
+        } finally {
+            setIsSaving(false);
+        }
+        return;
     }
     
-    // Lógica para salvar uma NOVA VENDA
     if (saleItems.length === 0) {
       Alert.alert('Venda Vazia', 'A venda não foi salva pois não continha itens.');
       setItemsModalVisible(false);
       return;
     }
+    if (!selectedPaymentMethodId) {
+        Alert.alert('Atenção', 'Por favor, selecione uma forma de pagamento.');
+        return;
+    }
 
     setIsSaving(true);
     try {
       let clienteIdResolved = null;
-      const { data: cliente } = await supabase.from('clientes').select('idcliente').ilike('razao', clienteNome).limit(1).single();
+      const { data: cliente } = await supabase.from('clientes').select('idcliente').ilike('razao', clienteNome).eq('empresa_id', activeCompany.id).limit(1).single();
       if (cliente) {
         clienteIdResolved = cliente.idcliente;
       } else {
-        const { data: novoCliente } = await supabase.from('clientes').insert({ razao: clienteNome }).select('idcliente').single();
+        const { data: novoCliente } = await supabase.from('clientes').insert({ razao: clienteNome, empresa_id: activeCompany.id }).select('idcliente').single();
         if (novoCliente) {
             clienteIdResolved = novoCliente.idcliente;
         }
       }
+      
+      const saleData = { 
+          idcliente: clienteIdResolved, 
+          valortotal: currentSaleTotal,
+          idformapagamento: selectedPaymentMethodId,
+          empresa_id: activeCompany.id // ADICIONADO O CARIMBO DA EMPRESA
+      };
 
-      const { data: novaVenda, error: vendaError } = await supabase.from('vendas').insert({ idcliente: clienteIdResolved, valortotal: 0 }).select('idvenda').single();
+      const { data: novaVenda, error: vendaError } = await supabase.from('vendas').insert(saleData).select('idvenda').single();
       if (vendaError) throw vendaError;
 
-      const itemsToInsert = saleItems.map(item => ({ idvenda: novaVenda.idvenda, idproduto: item.idproduto, qtde: item.qtde, vlrunit: item.vlrunit, desconto: item.desconto }));
+      const itemsToInsert = saleItems.map(item => ({ 
+          idvenda: novaVenda.idvenda, 
+          idproduto: item.idproduto, 
+          qtde: item.qtde, 
+          vlrunit: item.vlrunit, 
+          desconto: item.desconto,
+          empresa_id: activeCompany.id // ADICIONADO O CARIMBO DA EMPRESA
+      }));
       const { error: itemsError } = await supabase.from('vendaitens').insert(itemsToInsert);
       if (itemsError) throw itemsError;
 
@@ -415,7 +503,7 @@ export default function SalesScreen() {
     } finally {
       setIsSaving(false);
     }
-  }, [currentSaleId, saleItems, clienteNome, loadSales]);
+  }, [currentSaleId, saleItems, clienteNome, loadSales, selectedPaymentMethodId, currentSaleTotal, activeCompany]);
   
   const handleCancelSale = useCallback(() => {
     setItemsModalVisible(false);
@@ -424,18 +512,8 @@ export default function SalesScreen() {
 
   const handleDeleteSale = useCallback(async (saleId) => { /* ... */ }, [loadSales]);
 
-  const renderItem = ({ item }) => (
-    <View style={styles.saleCard}>
-      <Text style={styles.saleTitle}>Venda #{item.idvenda}</Text>
-      <Text style={styles.saleSubtitle}>Data: {new Date(item.dtvenda).toLocaleDateString('pt-BR')}</Text>
-      <Text style={styles.saleSubtitle}>Total: R$ {(item.valortotal || 0).toFixed(2).replace('.', ',')}</Text>
-      <View style={{ marginTop: 12 }}>
-        <TouchableOpacity style={styles.actionButton} onPress={() => openExistingSaleItemsModal(item.idvenda)}>
-          <Text style={styles.actionButtonText}>Visualizar / Editar Itens</Text>
-        </TouchableOpacity>
-      </View>
-    </View>
-  );
+  const renderSaleItem = ({ item: it }) => { /* ... */ };
+  const renderItem = ({ item }) => { /* ... */ };
 
   return (
     <View style={styles.container}>
@@ -463,13 +541,7 @@ export default function SalesScreen() {
           <View style={styles.modalContent}>
             <Text style={styles.modalTitle}>Itens da Venda {currentSaleId ? `#${currentSaleId}` : `(${clienteNome || 'Consumidor Final'})`}</Text>
             
-            {/* --- CÓDIGO RESTAURADO COMEÇA AQUI --- */}
-            <TextInput
-              style={styles.input}
-              placeholder="Buscar produto..."
-              onChangeText={loadProducts} // Simplificado para recarregar a lista
-              placeholderTextColor={colors.textLight}
-            />
+            <TextInput style={styles.input} placeholder="Buscar produto..." onChangeText={loadProducts} placeholderTextColor={colors.textLight} />
             <FlatList
               data={productsOptions}
               keyExtractor={(p) => String(p.idproduto)}
@@ -479,76 +551,59 @@ export default function SalesScreen() {
               contentContainerStyle={{ paddingBottom: 8, height: productsOptions.length > 0 ? 'auto' : 0 }}
               renderItem={({ item: p }) => (
                 <TouchableOpacity
-                  style={{
-                    paddingVertical: 8,
-                    paddingHorizontal: 12,
-                    borderRadius: 8,
-                    borderWidth: 1,
-                    borderColor: colors.border,
-                    marginRight: 8,
-                    backgroundColor: selectedProductId === p.idproduto ? colors.primary : colors.white,
-                  }}
-                  onPress={() => {
-                    setSelectedProductId(p.idproduto);
-                    setUnitPrice(p.preco != null ? String(p.preco) : '');
-                  }}
+                  style={[ styles.paymentButton, selectedProductId === p.idproduto && styles.paymentButtonSelected ]}
+                  onPress={() => { setSelectedProductId(p.idproduto); setUnitPrice(p.preco != null ? String(p.preco) : ''); }}
                 >
-                  <Text style={{ color: selectedProductId === p.idproduto ? colors.white : colors.text }} numberOfLines={1}>
-                    {p.descricao}
-                  </Text>
+                  <Text style={[styles.paymentButtonText, selectedProductId === p.idproduto && styles.paymentButtonTextSelected]} numberOfLines={1}>{p.descricao}</Text>
                 </TouchableOpacity>
               )}
             />
-             <View style={{ flexDirection: 'row', gap: 12 }}>
+            <View style={{ flexDirection: 'row', gap: 12 }}>
               <View style={{ flex: 1 }}>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Qtd"
-                  value={quantity}
-                  onChangeText={setQuantity}
-                  keyboardType="numeric"
-                  placeholderTextColor={colors.textLight}
-                />
+                <TextInput style={styles.input} placeholder="Qtd" value={quantity} onChangeText={setQuantity} keyboardType="numeric" placeholderTextColor={colors.textLight} />
               </View>
               <View style={{ flex: 1 }}>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Vlr Unit"
-                  value={unitPrice}
-                  onChangeText={setUnitPrice}
-                  keyboardType="numeric"
-                  placeholderTextColor={colors.textLight}
-                />
+                <TextInput style={styles.input} placeholder="Vlr Unit" value={unitPrice} onChangeText={setUnitPrice} keyboardType="numeric" placeholderTextColor={colors.textLight} />
               </View>
               <View style={{ flex: 1 }}>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Desconto (R$)"
-                  value={discount}
-                  onChangeText={setDiscount}
-                  keyboardType="numeric"
-                  placeholderTextColor={colors.textLight}
-                />
+                <TextInput style={styles.input} placeholder="Desconto (R$)" value={discount} onChangeText={setDiscount} keyboardType="numeric" placeholderTextColor={colors.textLight} />
               </View>
             </View>
-            <Text style={{ color: colors.text, marginBottom: 8 }}>
-              Subtotal: R$ {computedTotal.toFixed(2).replace('.', ',')}
-            </Text>
-            {/* --- CÓDIGO RESTAURADO TERMINA AQUI --- */}
+            <Text style={{ color: colors.text, marginBottom: 8 }}>Subtotal: R$ {computedTotal.toFixed(2).replace('.', ',')}</Text>
 
             <TouchableOpacity style={[styles.actionButton, { marginBottom: 12 }]} onPress={handleSaveItem}><Text style={styles.actionButtonText}>{editingItemId ? 'Atualizar Item' : 'Adicionar Item'}</Text></TouchableOpacity>
             
-            <FlatList data={saleItems} style={{maxHeight: 150}} keyExtractor={(it) => String(it.idvendaitem)} ListEmptyComponent={<Text style={{textAlign: 'center', color: colors.textLight, marginVertical: 20}}>Nenhum item adicionado</Text>} renderItem={({ item: it }) => { const itemSubtotal = (Number(it.qtde || 0) * Number(it.vlrunit || 0)) - Number(it.desconto || 0); return (
-              <TouchableOpacity onPress={() => startEditItem(it)} style={{ borderWidth: 1, borderColor: colors.border, borderRadius: 8, padding: 12, marginBottom: 8, backgroundColor: colors.white, }}>
-                <Text style={{ color: colors.text, fontWeight: '600' }}>{it.produtos?.descricao || `Produto`}</Text>
-                <Text style={{ color: colors.textLight }}>Qtd: {it.qtde} | Unit: R$ {Number(it.vlrunit || 0).toFixed(2).replace('.', ',')} | SubTotal: R$ {itemSubtotal.toFixed(2).replace('.', ',')}</Text>
-                <View style={{ position: 'absolute', right: 8, top: '50%', transform: [{ translateY: -10 }] }}><TouchableOpacity onPress={() => handleDeleteItem(it)}><Text style={{ color: colors.danger, fontWeight: '700' }}>Excluir</Text></TouchableOpacity></View>
-              </TouchableOpacity> ); }} />
+            <FlatList
+              data={saleItems}
+              style={{maxHeight: 150}}
+              keyExtractor={(it) => String(it.idvendaitem)}
+              ListEmptyComponent={<Text style={{textAlign: 'center', color: colors.textLight, marginVertical: 20}}>Nenhum item adicionado</Text>}
+              renderItem={renderSaleItem}
+            />
             
             <Text style={styles.totalText}>Total da Venda: R$ {currentSaleTotal.toFixed(2).replace('.', ',')}</Text>
             
+            <View style={styles.paymentContainer}>
+              <Text style={styles.paymentLabel}>Forma de Pagamento</Text>
+              <FlatList
+                  data={paymentOptions}
+                  keyExtractor={(method) => String(method.idformapagamento)}
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={{ paddingBottom: 8 }}
+                  renderItem={({ item: method }) => (
+                      <TouchableOpacity 
+                          style={[styles.paymentButton, selectedPaymentMethodId === method.idformapagamento && styles.paymentButtonSelected]}
+                          onPress={() => setSelectedPaymentMethodId(method.idformapagamento)}
+                      >
+                          <Text style={[styles.paymentButtonText, selectedPaymentMethodId === method.idformapagamento && styles.paymentButtonTextSelected]}>{method.descricao}</Text>
+                      </TouchableOpacity>
+                  )}
+              />
+            </View>
+            
             <View style={styles.modalButtons}>
-              {!currentSaleId && ( // Mostra o botão de cancelar apenas para NOVAS vendas
+              {!currentSaleId && (
                 <TouchableOpacity style={[styles.modalButton, styles.dangerButton]} onPress={handleCancelSale}><Text style={styles.saveButtonText}>Cancelar Venda</Text></TouchableOpacity>
               )}
               <TouchableOpacity style={[styles.modalButton, styles.saveButton]} onPress={handleFinalizeSale} disabled={isSaving}>
